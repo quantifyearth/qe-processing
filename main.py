@@ -3,10 +3,14 @@ import glob
 import shutil
 import sys
 
+import pandas as pd
 from geojson import Feature, FeatureCollection, Point, dumps
 
 def is_not_matchless(path: str) -> bool:
     return not path.endswith("_matchless.parquet")
+
+def round_float(arg):
+    return round(float(arg), 6)
 
 def run (root_matches_directory, partials_dir):
   all_pairs = glob.glob("*_pairs", root_dir=root_matches_directory)
@@ -37,20 +41,24 @@ def run (root_matches_directory, partials_dir):
       matches = glob.glob("*.parquet", root_dir=matches_directory)
       matches = [x for x in matches if is_not_matchless(x)]
 
-      for pair_idx, pairs in enumerate([matches[0]]):
+      for pair_idx, pairs in enumerate(matches):
           matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
           years = [col.replace("k_luc_", "") for col in matches_df.columns if "k_luc_" in col]
 
           points = []
 
-          print(matches_df.columns)
           for _, row in matches_df.iterrows():
-
               treat_props = { 
                   "slope": row["k_slope"],
                   "elevation": row["k_elevation"],
                   "accessibility": row["k_access"],
+                  "cpc0_d": round_float(row["k_cpc0_d"]),
+                  "cpc5_d": round_float(row["k_cpc5_d"]),
+                  "cpc10_d": round_float(row["k_cpc10_d"]),
+                  "cpc0_u": round_float(row["k_cpc0_u"]),
+                  "cpc5_u": round_float(row["k_cpc5_u"]),
+                  "cpc10_u": round_float(row["k_cpc10_u"]),
                   "treatment": "treatment",
                   "id": id
               }
@@ -60,7 +68,7 @@ def run (root_matches_directory, partials_dir):
 
               treatment = Feature(
                   properties=treat_props,
-                  geometry=Point((row["k_lng"], row["k_lat"]))
+                  geometry=Point((round_float(row["k_lng"]), round_float(row["k_lat"])))
               )
 
               id = id + 1
@@ -69,6 +77,12 @@ def run (root_matches_directory, partials_dir):
                   "slope": row["s_slope"],
                   "elevation": row["s_elevation"],
                   "accessibility": row["s_access"],
+                  "cpc0_d": round_float(row["s_cpc0_d"]),
+                  "cpc5_d": round_float(row["s_cpc5_d"]),
+                  "cpc10_d": round_float(row["s_cpc10_d"]),
+                  "cpc0_u": round_float(row["s_cpc0_u"]),
+                  "cpc5_u": round_float(row["s_cpc5_u"]),
+                  "cpc10_u": round_float(row["s_cpc10_u"]),
                   "treatment": "control",
                   "treat_id": id - 1,
                   "id": id
@@ -79,7 +93,7 @@ def run (root_matches_directory, partials_dir):
 
               control = Feature(
                   properties=control_props,
-                  geometry=Point((row["s_lng"], row["s_lat"]))
+                  geometry=Point((round_float(row["s_lng"]), round_float(row["s_lat"])))
               )
 
               points.append(treatment)
@@ -101,12 +115,7 @@ def main():
     except IndexError:
         print(f"Usage: {sys.argv[0]} PAIRS_DIRECTORY OUTPUT_DIRECTORY", file=sys.stderr)
         sys.exit(1)
-
-    try:
-        run(partials_dir, output_dir)
-    except ValueError as exc:
-        print(f"Invalid value: {exc.args}", file=sys.stderr)
-        sys.exit(1)
+    run(partials_dir, output_dir)
 
 if __name__ == "__main__":
     main()
