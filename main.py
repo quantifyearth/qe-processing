@@ -5,6 +5,8 @@ import sys
 
 import pandas as pd
 from geojson import Feature, FeatureCollection, Point, dumps
+from statistics import mean, stdev
+from math import sqrt
 
 def is_not_matchless(path: str) -> bool:
     return not path.endswith("_matchless.parquet")
@@ -12,10 +14,57 @@ def is_not_matchless(path: str) -> bool:
 def round_float(arg):
     return round(float(arg), 6)
 
+# Calculate proportion of forested pixels in one set of pairs
+def calculate_proportions(matches_df, years):
+    proportions = []
+    for year in years:
+        treat_forest = matches_df[(matches_df[f'k_luc_{year}'] == 1) & (matches_df['treatment'] == 'treatment')].shape[0]
+        control_forest = matches_df[(matches_df[f'k_luc_{year}'] == 1) & (matches_df['treatment'] == 'control')].shape[0]
+        total_treat = matches_df[matches_df['treatment'] == 'treatment'].shape[0]
+        total_control = matches_df[matches_df['treatment'] == 'control'].shape[0]
+
+        treat_prop = treat_forest / total_treat
+        control_prop = control_forest / total_control
+
+        proportions.append({
+            'year': year,
+            'treatment': treat_prop,
+            'control': control_prop
+        })
+
+    return proportions
+
+# Calculate mean and SE forested proportions across all sets of pairs
+def calculate_statistics(proportions_list, years):
+    treatment_means = {year: [] for year in years}
+    control_means = {year: [] for year in years}
+
+    for proportions in proportions_list:
+        for prop in proportions:
+            year = prop['year']
+            treatment_means[year].append(prop['treatment'])
+            control_means[year].append(prop['control'])
+
+    mean_proportions = {}
+    se_proportions = {}
+
+    for year in years:
+        treat_mean = mean(treatment_means[year]) * 100
+        control_mean = mean(control_means[year]) * 100
+        treat_se = (stdev(treatment_means[year]) / sqrt(len(treatment_means[year]))) * 100
+        control_se = (stdev(control_means[year]) / sqrt(len(control_means[year]))) * 100
+
+        mean_proportions[year] = {'treatment': treat_mean, 'control': control_mean}
+        se_proportions[year] = {'treatment': treat_se, 'control': control_se}
+
+    return mean_proportions, se_proportions
+
 def run (root_matches_directory, partials_dir):
   all_pairs = glob.glob("*_pairs", root_dir=root_matches_directory)
 
   id = 0
+
+  all_proportions = []
 
   for idx, pair in enumerate(all_pairs):
       matches_directory = os.path.join(root_matches_directory, pair)
@@ -47,6 +96,9 @@ def run (root_matches_directory, partials_dir):
           years = [col.replace("k_luc_", "") for col in matches_df.columns if "k_luc_" in col]
 
           points = []
+
+          proportions = calculate_proportions(matches_df, years)
+          all_proportions.append(proportions)
 
           for _, row in matches_df.iterrows():
               treat_props = { 
@@ -106,7 +158,18 @@ def run (root_matches_directory, partials_dir):
 
           with open(out_path, "w", encoding="utf-8") as output_file:
               output_file.write(dumps(points_gc))
-              
+
+        # Calculate statistics
+        mean_proportions, se_proportions = calculate_statistics(all_proportions, years)
+
+      print("Mean Proportions (%):")
+      for year, values in mean_proportions.items():
+        print(f"{year}: Treatment = {values['treatment']:.2f}%, Control = {values['control']:.2f}%")
+
+      print("Standard Errors (%):")
+      for year, values in se_proportions.items():
+        print(f"{year}: Treatment SE = {values['treatment']:.2f}%, Control SE = {values['control']:.2f}%")
+
 
 def main():
     try:
