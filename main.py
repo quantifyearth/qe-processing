@@ -14,14 +14,14 @@ def is_not_matchless(path: str) -> bool:
 def round_float(arg):
     return round(float(arg), 6)
 
-# Calculate proportion of forested pixels in one set of pairs
+# Function for calculating proportion of forested pixels in each set of pairs
 def calculate_proportions(matches_df, years):
     proportions = []
     for year in years:
-        treat_forest = matches_df[(matches_df[f'k_luc_{year}'] == 1) & (matches_df['treatment'] == 'treatment')].shape[0]
-        control_forest = matches_df[(matches_df[f'k_luc_{year}'] == 1) & (matches_df['treatment'] == 'control')].shape[0]
-        total_treat = matches_df[matches_df['treatment'] == 'treatment'].shape[0]
-        total_control = matches_df[matches_df['treatment'] == 'control'].shape[0]
+        treat_forest = matches_df[(matches_df[f'k_luc_{year}'] == 1)].shape[0]
+        control_forest = matches_df[(matches_df[f'k_luc_{year}'] == 1)].shape[0]
+        total_treat = matches_df.shape[0]
+        total_control = matches_df.shape[0]
 
         treat_prop = treat_forest / total_treat
         control_prop = control_forest / total_control
@@ -34,37 +34,10 @@ def calculate_proportions(matches_df, years):
 
     return proportions
 
-# Calculate mean and SE forested proportions across all sets of pairs
-def calculate_statistics(proportions_list, years):
-    treatment_means = {year: [] for year in years}
-    control_means = {year: [] for year in years}
-
-    for proportions in proportions_list:
-        for prop in proportions:
-            year = prop['year']
-            treatment_means[year].append(prop['treatment'])
-            control_means[year].append(prop['control'])
-
-    mean_proportions = {}
-    se_proportions = {}
-
-    for year in years:
-        treat_mean = mean(treatment_means[year]) * 100
-        control_mean = mean(control_means[year]) * 100
-        treat_se = (stdev(treatment_means[year]) / sqrt(len(treatment_means[year]))) * 100
-        control_se = (stdev(control_means[year]) / sqrt(len(control_means[year]))) * 100
-
-        mean_proportions[year] = {'treatment': treat_mean, 'control': control_mean}
-        se_proportions[year] = {'treatment': treat_se, 'control': control_se}
-
-    return mean_proportions, se_proportions
-
 def run (root_matches_directory, partials_dir):
   all_pairs = glob.glob("*_pairs", root_dir=root_matches_directory)
 
   id = 0
-
-  all_proportions = []
 
   for idx, pair in enumerate(all_pairs):
       matches_directory = os.path.join(root_matches_directory, pair)
@@ -90,15 +63,17 @@ def run (root_matches_directory, partials_dir):
       matches = glob.glob("*.parquet", root_dir=matches_directory)
       matches = [x for x in matches if is_not_matchless(x)]
 
+      all_proportions = []
+
       for pair_idx, pairs in enumerate(matches):
           matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
-
           years = [col.replace("k_luc_", "") for col in matches_df.columns if "k_luc_" in col]
 
-          points = []
-
+          # Calculate % forest cover
           proportions = calculate_proportions(matches_df, years)
-          all_proportions.append(proportions)
+          all_proportions.extend(proportions)
+
+          points = []
 
           for _, row in matches_df.iterrows():
               treat_props = { 
@@ -159,16 +134,31 @@ def run (root_matches_directory, partials_dir):
           with open(out_path, "w", encoding="utf-8") as output_file:
               output_file.write(dumps(points_gc))
 
-        # Calculate statistics
-        mean_proportions, se_proportions = calculate_statistics(all_proportions, years)
+     # Set up df for stats
+      prop_df = pd.DataFrame(all_proportions)
+      prop_df_grouped = prop_df.groupby('year')
 
-      print("Mean Proportions (%):")
-      for year, values in mean_proportions.items():
-        print(f"{year}: Treatment = {values['treatment']:.2f}%, Control = {values['control']:.2f}%")
+      results = []
 
-      print("Standard Errors (%):")
-      for year, values in se_proportions.items():
-        print(f"{year}: Treatment SE = {values['treatment']:.2f}%, Control SE = {values['control']:.2f}%")
+     # Calculate mean and 95% confidence intervals
+      for year, group in prop_df_grouped:
+        for treatment in ['treatment', 'control']:
+            data = group[treatment]
+            mean_prop = data.mean()
+            std_dev = data.std()
+            count = data.count()
+            ci_95 = 1.96 * (std_dev / sqrt(count))
+
+            results.append({
+                'year': year,
+                'treatment': treatment,
+                'mean': mean_prop * 100,
+                'ci_lower': (mean_prop - ci_95) * 100,
+                'ci_upper': (mean_prop + ci_95) * 100
+            })
+
+      results_df = pd.DataFrame(results)
+      results_df.to_json(os.path.join(output_directory, "forest-cover-stats.json"), orient="records") 
 
 
 def main():
