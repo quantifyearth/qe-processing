@@ -19,7 +19,7 @@ def calculate_proportions(matches_df, years):
     proportions = []
     for year in years:
         treat_forest = matches_df[(matches_df[f'k_luc_{year}'] == 1)].shape[0]
-        control_forest = matches_df[(matches_df[f'k_luc_{year}'] == 1)].shape[0]
+        control_forest = matches_df[(matches_df[f's_luc_{year}'] == 1)].shape[0]
         total_treat = matches_df.shape[0]
         total_control = matches_df.shape[0]
 
