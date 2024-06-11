@@ -5,12 +5,34 @@ import sys
 
 import pandas as pd
 from geojson import Feature, FeatureCollection, Point, dumps
+from statistics import mean, stdev
+from math import sqrt
 
 def is_not_matchless(path: str) -> bool:
     return not path.endswith("_matchless.parquet")
 
 def round_float(arg):
     return round(float(arg), 6)
+
+# Function for calculating proportion of forested pixels in each set of pairs
+def calculate_proportions(matches_df, years):
+    proportions = []
+    for year in years:
+        treat_forest = matches_df[(matches_df[f'k_luc_{year}'] == 1)].shape[0]
+        control_forest = matches_df[(matches_df[f's_luc_{year}'] == 1)].shape[0]
+        total_treat = matches_df.shape[0]
+        total_control = matches_df.shape[0]
+
+        treat_prop = treat_forest / total_treat
+        control_prop = control_forest / total_control
+
+        proportions.append({
+            'year': year,
+            'treatment': treat_prop,
+            'control': control_prop
+        })
+
+    return proportions
 
 def run (root_matches_directory, partials_dir):
   all_pairs = glob.glob("*_pairs", root_dir=root_matches_directory)
@@ -41,10 +63,15 @@ def run (root_matches_directory, partials_dir):
       matches = glob.glob("*.parquet", root_dir=matches_directory)
       matches = [x for x in matches if is_not_matchless(x)]
 
+      all_proportions = []
+
       for pair_idx, pairs in enumerate(matches):
           matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
-
           years = [col.replace("k_luc_", "") for col in matches_df.columns if "k_luc_" in col]
+
+          # Calculate % forest cover
+          proportions = calculate_proportions(matches_df, years)
+          all_proportions.extend(proportions)
 
           points = []
 
@@ -106,7 +133,33 @@ def run (root_matches_directory, partials_dir):
 
           with open(out_path, "w", encoding="utf-8") as output_file:
               output_file.write(dumps(points_gc))
-              
+
+     # Set up df for stats
+      prop_df = pd.DataFrame(all_proportions)
+      prop_df_grouped = prop_df.groupby('year')
+
+      results = []
+
+     # Calculate mean and 95% confidence intervals
+      for year, group in prop_df_grouped:
+        for treatment in ['treatment', 'control']:
+            data = group[treatment]
+            mean_prop = data.mean()
+            std_dev = data.std()
+            count = data.count()
+            ci_95 = 1.96 * (std_dev / sqrt(count))
+
+            results.append({
+                'year': year,
+                'treatment': treatment,
+                'mean': mean_prop * 100,
+                'ci_lower': (mean_prop - ci_95) * 100,
+                'ci_upper': (mean_prop + ci_95) * 100
+            })
+
+      results_df = pd.DataFrame(results)
+      results_df.to_json(os.path.join(output_directory, "forest-cover-stats.json"), orient="records") 
+
 
 def main():
     try:
